@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	_ "log"
+	"math"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -21,10 +22,11 @@ type GameState struct {
 	bullets   []Bullet
 }
 type Character struct {
-	Position  rl.Rectangle
-	Velocity  rl.Vector2
-	State     state
-	Animation Animation
+	Position     rl.Rectangle
+	Velocity     rl.Vector2
+	Acceleration rl.Vector2
+	State        state
+	Animation    Animation
 }
 
 type Bullet struct {
@@ -35,8 +37,14 @@ type Bullet struct {
 const gravity = 1.2
 const jumpForce = -20
 const speed = 5
+const friction = 0.8
 
 const bulletSpeed = 7
+
+const PJ_WIDTH = 64
+const PJ_HEIGHT = 64
+const PJ_MAXSPEED = 5
+const PJ_ACCELERATION = 0.4
 
 func main() {
 	fmt.Println("Start")
@@ -48,16 +56,18 @@ func main() {
 	rl.SetTargetFPS(60)
 
 	bg := rl.LoadTexture("assets/bg.png")
-	defer rl.UnloadTexture(bg)
 	pjTexture := rl.LoadTexture("assets/player/fishy.png")
+	bulletTexture := rl.LoadTexture("assets/shoot.png")
+	defer rl.UnloadTexture(bg)
 	defer rl.UnloadTexture(pjTexture)
+	defer rl.UnloadTexture(bulletTexture)
 
 	pj := Character{
 		Position: rl.Rectangle{
 			X:      float32(screenWidth / 2),
 			Y:      float32(screenHeight / 2),
-			Width:  64,
-			Height: 96,
+			Width:  PJ_WIDTH,
+			Height: PJ_HEIGHT,
 		},
 		Velocity: rl.Vector2{X: 0, Y: 0},
 
@@ -110,6 +120,7 @@ func main() {
 		pj.Velocity.Y += gravity
 		pj.UpdatePosition()
 
+		// TODO: Cut this shit, and check just if the character is colisioning/
 		for _, platform := range platforms {
 			if rl.CheckCollisionRecs(pj.Position, platform) {
 				pj.Position.Y = platform.Y - pj.Position.Height
@@ -153,15 +164,22 @@ func main() {
 		rl.DrawTexturePro(
 			pjTexture,
 			pjFrame,
-			rl.Rectangle{pj.Position.X - 32, pj.Position.Y - 16, 128.0, 128.0},
+			pj.Position,
 			rl.Vector2{0.0, 0.0},
 			0.0, rl.White)
 
 		for _, platform := range GS.platforms {
 			rl.DrawRectangleRec(platform, rl.Red)
 		}
+
+		bulletFrame := rl.Rectangle{0, 0, float32(bulletTexture.Width), float32(bulletTexture.Height)}
 		for _, bullet := range GS.bullets {
-			rl.DrawRectangleRec(bullet.Position, rl.RayWhite)
+			angle := float32(math.Atan2(float64(bullet.Direction.Y), float64(bullet.Direction.X)) * (180.0 / math.Pi))
+			rl.DrawTexturePro(bulletTexture,
+				bulletFrame,
+				bullet.Position,
+				rl.Vector2{0.0, 0.0},
+				angle, rl.White)
 		}
 
 		rl.EndDrawing()
@@ -172,21 +190,32 @@ func main() {
 func (pj *Character) UpdatePosition() {
 	pj.Animation.AnimationUpdate()
 
-	pj.Position.X += pj.Velocity.X
-	pj.Position.Y += pj.Velocity.Y
 }
 
 func (pj *Character) GetInput(gs *GameState) {
+	pj.Acceleration.X = 0
+
 	if rl.IsKeyDown(rl.KeyLeft) {
 		pj.Animation.direction = LEFT
-		pj.Velocity.X = -speed
+		pj.Acceleration.X -= PJ_ACCELERATION
 	} else if rl.IsKeyDown(rl.KeyRight) {
 		pj.Animation.direction = RIGHT
-		pj.Velocity.X = speed
-
-	} else {
-		pj.Velocity.X = 0
+		pj.Acceleration.X += PJ_ACCELERATION
 	}
+
+	pj.Velocity.X += pj.Acceleration.X
+	pj.Velocity.X = Clamp(pj.Velocity.X, -PJ_MAXSPEED, PJ_MAXSPEED)
+
+	if !rl.IsKeyDown(rl.KeyRight) && !rl.IsKeyDown(rl.KeyLeft) {
+		pj.Velocity.X *= friction
+
+		if math.Abs(float64(pj.Velocity.X)) < 0.15 {
+			pj.Velocity.X = 0
+		}
+	}
+
+	pj.Position.X += pj.Velocity.X
+	pj.Position.Y += pj.Velocity.Y
 
 	if rl.IsMouseButtonPressed(rl.MouseLeftButton) {
 
@@ -202,7 +231,7 @@ func (pj *Character) GetInput(gs *GameState) {
 		}
 
 		b := Bullet{
-			Position:  rl.Rectangle{X: pj.Position.X, Y: pj.Position.Y, Width: 10, Height: 10},
+			Position:  rl.Rectangle{X: pj.Position.X + pj.Position.Width/2, Y: pj.Position.Y + pj.Position.Height/2, Width: 32, Height: 32},
 			Direction: dir,
 		}
 		gs.bullets = append(gs.bullets, b)
@@ -212,6 +241,20 @@ func (pj *Character) GetInput(gs *GameState) {
 		pj.State = IsJumping
 		pj.Velocity.Y = jumpForce
 	}
+
+	// State Managment
+
+	if pj.State == IsJumping {
+
+	} else {
+		if math.Abs(float64(pj.Velocity.X)) > 0.1 {
+			pj.State = IsRunning
+		} else {
+			pj.State = IsIDLE
+		}
+
+	}
+
 }
 
 func (pj *Character) UpdateAnimationFrame() rl.Rectangle {
